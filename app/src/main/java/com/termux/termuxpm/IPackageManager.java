@@ -32,6 +32,7 @@ class IPackageManager {
     private final CrossVersionReflectedMethod mRevokeRuntimePermission;
     private final CrossVersionReflectedMethod mClearApplicationUserData;
     private final CrossVersionReflectedMethod mSetComponentEnabledSetting;
+    private final CrossVersionReflectedMethod mHasSystemFeature;
 
     IPackageManager() throws Exception {
         IBinder binder = (IBinder) Class
@@ -164,6 +165,17 @@ class IPackageManager {
                 int.class,           "newState",
                 int.class,           "flags",
                 int.class,           "userId");
+
+	mHasSystemFeature = new CrossVersionReflectedMethod(pmClass)
+	    .tryMethodVariantInexact("hasSystemFeature",
+		String.class, "featureName",
+		int.class,    "featureVersion",
+		int.class,    "userId")
+	    .tryMethodVariantInexact("hasSystemFeature",
+		String.class, "featureName",
+		int.class,    "userId")
+	    .tryMethodVariantInexact("hasSystemFeature",
+		String.class, "featureName");
     }
 
     PackageInfo getPackageInfo(String pkg, int flags, int userId) throws Exception {
@@ -301,5 +313,29 @@ class IPackageManager {
             "flags",         flags,
             "userId",        userId
         );
+    }
+
+    public boolean hasSystemFeature(String featureName, int featureVersion, int userId) throws Exception {
+	return (Boolean) mHasSystemFeature.invoke(
+	    mPm,
+	    "featureName",    featureName,
+	    "featureVersion", featureVersion,
+	    "userId",         userId
+	);
+    }
+
+    public boolean hasSystemFeature(String featureName, int userId) throws Exception {
+	return (Boolean) mHasSystemFeature.invoke(
+	    mPm,
+	    "featureName", featureName,
+	    "userId",      userId
+	);
+    }
+
+    public boolean hasSystemFeature(String featureName) throws Exception {
+	return (Boolean) mHasSystemFeature.invoke(
+	    mPm,
+	    "featureName", featureName
+	);
     }
 }
