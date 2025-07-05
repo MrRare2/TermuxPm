@@ -1,4 +1,4 @@
-package com.termux.termuxam;
+package com.termux.termuxpm;
 
 /**
  * \@hide-hidden constants

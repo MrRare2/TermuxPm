@@ -16,3 +16,8 @@ allowing installation of Java part from Android Studio
 # Running tests/debugging
 Tests checking IActivityManager wrapper class are in `app/src/androidTest/java/com/termux/termuxam/IActivityManagerTest.java`
 and are runnable/debuggable from Android Studio
+
+# Implemented `pm` commands
+
+- [x] `pm path [--user USER_ID] PACKACGE`
+

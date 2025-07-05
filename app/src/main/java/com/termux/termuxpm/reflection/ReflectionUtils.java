@@ -1,12 +1,12 @@
-package com.termux.termuxam.reflection;
+package com.termux.termuxpm.reflection;
 
 import android.os.Build;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.termux.termuxam.logger.Logger;
-import com.termux.termuxam.reflection.result.MethodInvokeResult;
+import com.termux.termuxpm.logger.Logger;
+import com.termux.termuxpm.reflection.result.MethodInvokeResult;
 
 import org.lsposed.hiddenapibypass.HiddenApiBypass;
 

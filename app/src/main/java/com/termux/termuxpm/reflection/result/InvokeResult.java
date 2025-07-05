@@ -1,4 +1,4 @@
-package com.termux.termuxam.reflection.result;
+package com.termux.termuxpm.reflection.result;
 
 /**
  * Result for an invocation.

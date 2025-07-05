@@ -1,4 +1,4 @@
-package com.termux.termuxam.reflection.result;
+package com.termux.termuxpm.reflection.result;
 
 import java.lang.reflect.Method;
 

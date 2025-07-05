@@ -1,4 +1,4 @@
-package com.termux.termuxam;
+package com.termux.termuxpm;
 
 import android.annotation.TargetApi;
 import android.content.AttributionSource;

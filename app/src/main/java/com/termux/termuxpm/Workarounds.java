@@ -1,6 +1,6 @@
-package com.termux.termuxam;
+package com.termux.termuxpm;
 
-import static com.termux.termuxam.Am.LOG_TAG;
+import static com.termux.termuxpm.Pm.LOG_TAG;
 
 import android.annotation.SuppressLint;
 import android.app.Application;

@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.termux.termuxam"
+    namespace "com.termux.termuxpm"
     compileSdkVersion 33
     defaultConfig {
-        applicationId "com.termux.termuxam"
+        applicationId "com.termux.termuxpm"
         minSdkVersion 21
         // Note: targetSdkVersion affects only tests,
         //       normally, even though this is packaged as apk,

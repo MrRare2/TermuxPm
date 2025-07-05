@@ -15,7 +15,7 @@
 ** limitations under the License.
 */
 
-package com.termux.termuxam;
+package com.termux.termuxpm;
 
 import java.io.PrintStream;
 

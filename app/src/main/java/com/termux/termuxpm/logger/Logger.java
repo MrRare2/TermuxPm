@@ -1,4 +1,4 @@
-package com.termux.termuxam.logger;
+package com.termux.termuxpm.logger;
 
 import java.io.IOException;
 import java.io.PrintWriter;
