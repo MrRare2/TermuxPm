@@ -24,16 +24,25 @@ import android.content.pm.PackageManager;
 import android.content.ComponentName;
 import android.content.IIntentReceiver;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.FeatureInfo;
 import android.content.pm.InstrumentationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageInstaller;
+import android.content.pm.PackageItemInfo;
+import android.content.pm.PermissionInfo;
+import android.content.pm.PermissionGroupInfo;
+import android.content.pm.SharedLibraryInfo;
+import android.content.res.AssetManager;
+import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Process;
 import android.os.SystemClock;
+import android.os.UserHandle;
 import android.util.AndroidException;
 
 import com.termux.termuxpm.logger.Logger;
@@ -42,12 +51,17 @@ import com.termux.termuxpm.reflection.ReflectionUtils;
 import java.io.File;
 import java.io.PrintStream;
 import java.io.PrintWriter;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.URISyntaxException;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
+import java.util.WeakHashMap;
 
 public class Pm extends BaseCommand {
 
@@ -100,11 +114,11 @@ public class Pm extends BaseCommand {
     /** An undefined user id. */
     public static final int USER_NULL = -10000;
 
-
-
     private IActivityManager mAm;
     
     private IPackageManager mPm; // IPackageManager mPm;
+    
+    private IPermissionManager mPermManager;
 
     private int mStartFlags = 0;
     private boolean mWaitOption = false;
@@ -121,6 +135,8 @@ public class Pm extends BaseCommand {
     private boolean mAutoStop;
     private int mStackId;
     */
+
+    final private WeakHashMap<String, Resources> mResourceCache = new WeakHashMap<String, Resources>();
 
     /**
      * Command-line entry point.
@@ -143,24 +159,31 @@ public class Pm extends BaseCommand {
         PrintWriter pw = new PrintWriter(out);
         pw.println(
                 "Package manager (package) commands provided by the " + FakeContext.PACKAGE_NAME + " app.\n" +
-                "These are similar to commands provided by the Android platform with the /system/bin/pm command. (This is still in development (alpha)\n\n\n" +
+                "These are similar to commands provided by the Android platform with the /system/bin/pm command.\n\n" +
 		"  help\n" +
 		"    Print this help text\n\n" +
 		"  path [--user USER_ID] PACKAGE}\n" +
 		"   Print the path to the .apk of the given PACKAGE.\n\n" +
-		"  dump PACKAGE\n" +
+		/*"  dump PACKAGE\n" +
 		"    Print various system state associated with the given PACKAGE.\n\n" +
 		"  dump-package PACKAGE\n" +
-		"    Print package manager state associated with the given PACKAGE.\n\n" +
+		"    Print package manager state associated with the given PACKAGE.\n\n" + */
 		"  has-feature FEATURE_NAME [version]\n" +
 		"    Prints true and returns exit status 0 when system has a FEATURE_NAME,\n" +
 		"    otherwise prints false and returns exit status 1.\n\n" +
                 "  list features\n" +
                 "    Prints all features of the system.\n\n" +
-                "\n"
-        );
-        IntentCmd.printIntentArgsHelp(pw, "");
-	pw.println("this is still a stub\n");
+		"  list instrumentation [-f] [TARGET-PACKAGE]\n" +
+		"    Prints all test packages; optionally only those targeting TARGET-PACKAGE\n\n" +
+		"    Options:\n" +
+		"      -f: dump the name of the .apk file containing the test package\n\n" +
+		"  install PATH\n" +
+		"    Install an application. Must provide the apk data to install,\n" +
+		"    as an absolute file path\n\n" +
+		"  uninstall PACKAGE\n" +
+		"    Remove the given package name from the system.\n\n"
+	);
+        //IntentCmd.printIntentArgsHelp(pw, "");
         pw.flush();
     }
 
@@ -184,6 +207,13 @@ public class Pm extends BaseCommand {
             throw new AndroidException("Can't connect to package manager; is the system running?");
         }
 
+	mPermManager = new IPermissionManager();
+
+	if (mPermManager == null) {
+	    System.err.println(NO_SYSTEM_ERROR_CODE);
+	    throw new AndroidException("Can't connect to permission manager; is the system running?");
+	}
+
 	if (op.equals("path")) {
             return runPath();
 	} else if (op.equals("has-feature")) {
@@ -194,167 +224,53 @@ public class Pm extends BaseCommand {
 	    return runInstall();
 	} else if (op.equals("uninstall")) {
 	    return runUninstall();
-        } else {
+	} else {
             showError("Error: unknown command '" + op + "'");
             return 1;
         }
     }
 
-
-
-    /** Returns the user id for a given uid. */
-    public static int getUserId(int uid) {
-        return uid / PER_USER_RANGE;
-    }
-
-    /**
-     * Get the user id for the current foreground user.
-     *
-     * This requires `android.permission.INTERACT_ACROSS_USERS` or `android.permission.INTERACT_ACROSS_USERS_FULL`,
-     * so should be only called if process is running as privileged user like root (`0`) or shell (`2000`)
-     * user, etc or if the app has been granted the permission.
-     *
-     * - https://cs.android.com/android/platform/superproject/+/android-14.0.0_r1:frameworks/base/core/java/android/app/ActivityManager.java;l=4752
-     * - https://cs.android.com/android/platform/superproject/+/android-14.0.0_r1:frameworks/base/services/core/java/com/android/server/am/ActivityManagerService.java;l=17146
-     * - https://cs.android.com/android/platform/superproject/+/android-14.0.0_r1:frameworks/base/services/core/java/com/android/server/am/UserController.java;l=2721
-     * - https://cs.android.com/android/platform/superproject/+/android-14.0.0_r1:frameworks/base/services/core/java/com/android/server/am/UserController.java;l=1695
-     *
-     * @return Returns the user id.
-     */
-    public static int getCurrentUserId() {
-        ReflectionUtils.bypassHiddenAPIReflectionRestrictions();
-
-        String className = "android.app.ActivityManager";
-        String methodName = "getCurrentUser";
-        try {
-            @SuppressLint("PrivateApi") Class<?> clazz = Class.forName(className);
-            Method method = ReflectionUtils.getDeclaredMethod(clazz, methodName);
-            if (method == null) {
-                return USER_NULL;
-            }
-
-            Integer userId = (Integer) ReflectionUtils.invokeMethod(method, null).value;
-            return userId != null && userId >= 0 ? userId : USER_NULL;
-        } catch (Exception e) {
-            Logger.logStackTraceWithMessage("Error: Failed to call " + methodName + "() method of " + className + " class", e);
-            return USER_NULL;
-        }
-    }
-
-    int parseUserArg(String arg) {
-        return parseUserArg(arg, false);
-    }
-
-    int parseUserArg(String arg, boolean getActualUser) {
-        int userId;
-        if ("all".equals(arg)) {
-            //userId = UserHandle.USER_ALL;
-            userId = USER_ALL;
-        } else if ("current".equals(arg) || "cur".equals(arg)) {
-            //userId = UserHandle.USER_CURRENT;
-
-            // We cannot USER_CURRENT (`-2`) for intent commands as it may result in following exception
-            // on some devices if running as a normal app user without required permissions.
-            // `java.lang.SecurityException: Permission Denial: <method> asks to run as user -2 but
-            // is calling from uid <uid>; this requires android.permission.INTERACT_ACROSS_USERS_FULL
-            // or android.permission.INTERACT_ACROSS_USERS`
-            // - https://github.com/termux/TermuxAm/issues/11
-            // Instead, if current process is owned by an app, we return user id for the current process.
-            // However, if current process is running as a privileged user like root (`0`) or
-            // shell (`2000`) user, `getUserId()` will always return `0`, which will be wrong if
-            // running in a secondary user like `10`.
-            // So if current process is not owned by an app, and we need the actual user, like for
-            // `get-current-user` command, then we use reflection via `getCurrentUserId()` to get
-            // the actual user id from a SystemApi, otherwise for intent commands, we return
-            // `USER_CURRENT`, as privileged users should have the `INTERACT_ACROSS_USERS*` permission
-            // and we let framework to get the actual user itself instead of using reflection here.
-            int uid = Process.myUid();
-            if (uid >= FIRST_APPLICATION_UID) {
-                userId = getUserId(uid);
-            } else {
-                userId = getActualUser ? getCurrentUserId() : USER_CURRENT;
-            }
-        } else {
-            userId = Integer.parseInt(arg);
-        }
-        return userId;
-    }
-
-    private Intent makeIntent() throws URISyntaxException {
-        mStartFlags = 0;
-        mWaitOption = false;
-        mStopOption = false;
-        mRepeat = 0;
-        /*
-        mProfileFile = null;
-        mSamplingInterval = 0;
-        mAutoStop = false;
-        */
-        mUserId = null;
-        mCheckDrawOverAppsPermissions = false;
-        /*
-        mStackId = INVALID_STACK_ID;
-        */
-
-
-        Intent intent = IntentCmd.parseCommandArgs(mArgs, new IntentCmd.CommandOptionHandler() {
-            @Override
-            public boolean handleOption(String opt, ShellCommand cmd) {
-                /*if (opt.equals("-D")) {
-                    mStartFlags |= ActivityManager.START_FLAG_DEBUG;
-                } else if (opt.equals("-N")) {
-                    mStartFlags |= ActivityManager.START_FLAG_NATIVE_DEBUGGING;
-                } else */if (opt.equals("-W")) {
-                    mWaitOption = true;
-                /*
-                } else if (opt.equals("-P")) {
-                    mProfileFile = nextArgRequired();
-                    mAutoStop = true;
-                } else if (opt.equals("--start-profiler")) {
-                    mProfileFile = nextArgRequired();
-                    mAutoStop = false;
-                } else if (opt.equals("--sampling")) {
-                    mSamplingInterval = Integer.parseInt(nextArgRequired());
-                */
-                } else if (opt.equals("-R")) {
-                    mRepeat = Integer.parseInt(nextArgRequired());
-                } else if (opt.equals("-S")) {
-                    mStopOption = true;
-                /*
-                } else if (opt.equals("--track-allocation")) {
-                    mStartFlags |= ActivityManager.START_FLAG_TRACK_ALLOCATION;
-                */
-                } else if (opt.equals("--user")) {
-                    mUserId = parseUserArg(nextArgRequired());
-                } else if (opt.equals("--receiver-permission")) {
-                    mReceiverPermission = nextArgRequired();
-                } else if (opt.equals("--check-draw-over-apps-permission")) {
-                    mCheckDrawOverAppsPermissions = true;
-                /*
-                } else if (opt.equals("--stack")) {
-                    mStackId = Integer.parseInt(nextArgRequired());
-                */
-                } else {
-                    return false;
-                }
-                return true;
-            }
-        });
-
-        // We do not get current user at start of this method in case caller knows that current process
-        // does not have required permissions to call `getCurrentUserId()` and has manually passed
-        // the user id with the `--user` argument.
-        // .
-        if (mUserId == null) {
-            mUserId = parseUserArg("current");
-        }
-
-        return intent;
-    }
-
     // TODO: start implementing here :TODO
     public static boolean isEmpty(String[] arr) {
 	return arr == null || arr.length == 0;
+    }
+
+    private String loadText(PackageItemInfo pii, int res, CharSequence nonLocalized) throws Exception {
+        if (nonLocalized != null) {
+            return nonLocalized.toString();
+        }
+        if (res != 0) {
+            Resources r = getResources(pii);
+            if (r != null) {
+                try {
+		    return r.getString(res);
+                } catch (Resources.NotFoundException e) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private Resources getResources(PackageItemInfo pii) throws Exception {
+        Resources res = mResourceCache.get(pii.packageName);
+        if (res != null) return res;
+	
+	ApplicationInfo ai = mPm.getApplicationInfo(pii.packageName, 0, 0);
+	Constructor<AssetManager> ctor = AssetManager.class.getDeclaredConstructor();
+	ctor.setAccessible(true);
+	AssetManager am = ctor.newInstance();
+	Method mAddAssetPath = AssetManager.class.getDeclaredMethod("addAssetPath", String.class);
+	mAddAssetPath.setAccessible(true);
+        mAddAssetPath.invoke(am, ai.publicSourceDir);
+        res = new Resources(am, null, null);
+        mResourceCache.put(pii.packageName, res);
+        return res;
+    }
+
+    private String getProtLevel(int protLevel) throws Exception {
+	Method mProtToStr = PermissionInfo.class.getDeclaredMethod("protectionToString", int.class);
+	mProtToStr.setAccessible(true);
+	return (String) mProtToStr.invoke(null, protLevel);
     }
 
     private int displayPackageFilePath(String pckg, int userId) throws Exception {
@@ -477,6 +393,14 @@ public class Pm extends BaseCommand {
 	    return runListFeatures();
 	} else if (type.equals("instrumentation")) {
 	    return runListInstrumentation();
+	} else if (type.equals("libraries")) {
+	    return runListLibraries();
+        } else if (type.equals("package")||type.equals("packages")) {
+	    return runListPackages(false);
+	} else if (type.equals("permission-groups")) {
+	    return runListPermissionGroups();
+	} else if (type.equals("permissions")) {
+	    return runListPermissions();
 	}
 
 	System.err.println("Error: unknown list type '" + type + "'");
@@ -561,6 +485,292 @@ public class Pm extends BaseCommand {
             System.out.print(" (target=");
             System.out.print(ii.targetPackage);
             System.out.println(")");
+        }
+        return 0;
+    }
+
+    private int runListLibraries() throws Exception {
+        final List<String> list = new ArrayList<String>();
+        final String[] rawList = mPm.getSystemSharedLibraryNames();
+        for (int i = 0; i < rawList.length; i++) {
+            list.add(rawList[i]);
+        }
+        // sort by name
+        Collections.sort(list, new Comparator<String>() {
+            public int compare(String o1, String o2) {
+                if (o1 == o2) return 0;
+                if (o1 == null) return -1;
+                if (o2 == null) return 1;
+                return o1.compareTo(o2);
+            }
+        });
+        final int count = (list != null) ? list.size() : 0;
+        for (int p = 0; p < count; p++) {
+            String lib = list.get(p);
+            System.out.print("library:");
+            System.out.println(lib);
+        }
+        return 0;
+    }
+
+    private int runListPackages(boolean showSourceDir) throws Exception {
+        final PrintStream pw = System.out;
+	final PrintStream pwErr = System.err;
+        int getFlags = 0;
+        boolean listDisabled = false, listEnabled = false;
+        boolean listSystem = false, listThirdParty = false;
+        boolean listInstaller = false;
+        int userId = USER_ALL;
+        try {
+            String opt;
+            while ((opt = nextOption()) != null) {
+                switch (opt) {
+                    case "-d":
+                        listDisabled = true;
+                        break;
+                    case "-e":
+                        listEnabled = true;
+                        break;
+                    case "-f":
+                        showSourceDir = true;
+                        break;
+                    case "-i":
+                        listInstaller = true;
+                        break;
+                    case "-s":
+                        listSystem = true;
+                        break;
+                    case "-u":
+                        getFlags |= PackageManager.GET_UNINSTALLED_PACKAGES;
+                        break;
+                    case "-3":
+                        listThirdParty = true;
+                        break;
+                    case "--user":
+                        userId = Integer.parseInt(nextArgRequired());
+                        break;
+                    default:
+                        pw.println("Error: Unknown option: " + opt);
+                        return -1;
+                }
+            }
+        } catch (Exception ex) {
+            pwErr.println("Error: " + ex.toString());
+            return -1;
+        }
+        final String filter = nextArg();
+        @SuppressWarnings("unchecked")
+        final PackageInfo[] slice = mPm.getInstalledPackages(getFlags, userId);
+        final List<PackageInfo> packages = Arrays.asList(slice);
+        final int count = packages.size();
+        for (int p = 0; p < count; p++) {
+            final PackageInfo info = packages.get(p);
+            if (filter != null && !info.packageName.contains(filter)) {
+                continue;
+            }
+            final boolean isSystem =
+                    (info.applicationInfo.flags&ApplicationInfo.FLAG_SYSTEM) != 0;
+            if ((!listDisabled || !info.applicationInfo.enabled) &&
+                    (!listEnabled || info.applicationInfo.enabled) &&
+                    (!listSystem || isSystem) &&
+                    (!listThirdParty || !isSystem)) {
+                pw.print("package:");
+                if (showSourceDir) {
+                    pw.print(info.applicationInfo.sourceDir);
+                    pw.print("=");
+                }
+                pw.print(info.packageName);
+                if (listInstaller) {
+                    pw.print("  installer=");
+                    pw.print(mPm.getInstallerPackageName(info.packageName));
+                }
+                pw.println();
+            }
+        }
+        return 0;
+    }
+
+    private int runListPermissionGroups() throws Exception {
+	List<PermissionGroupInfo> pgs;
+        if (Build.VERSION.SDK_INT >= 30) {
+	    pgs = Arrays.asList(mPermManager.getAllPermissionGroups(0));
+	} else {
+	    pgs = Arrays.asList(mPm.getAllPermissionGroups(0));
+	}
+        final int count = pgs.size();
+        for (int p = 0; p < count ; p++) {
+            final PermissionGroupInfo pgi = (PermissionGroupInfo) pgs.get(p);
+            System.out.print("permission group:");
+            System.out.println(pgi.name);
+        }
+        return 0;
+    }
+
+    private void doListPermissions(ArrayList<String> groupList, boolean groups, boolean labels, boolean summary, int startProtectionLevel, int endProtectionLevel) throws Exception {
+        final PrintStream pw = System.out;
+        final int groupCount = groupList.size();
+        for (int i = 0; i < groupCount; i++) {
+            String groupName = groupList.get(i);
+            String prefix = "";
+            if (groups) {
+                if (i > 0) {
+                    pw.println("");
+                }
+                if (groupName != null) {
+                    PermissionGroupInfo pgi =
+                            mPm.getPermissionGroupInfo(groupName, 0 /*flags*/);
+                    if (summary) {
+                        Resources res = getResources(pgi);
+                        if (res != null) {
+                            pw.print(loadText(pgi, pgi.labelRes, pgi.nonLocalizedLabel) + ": ");
+                        } else {
+                            pw.print(pgi.name + ": ");
+			}
+                    } else {
+                        pw.println((labels ? "+ " : "") + "group:" + pgi.name);
+                        if (labels) {
+                            pw.println("  package:" + pgi.packageName);
+                            Resources res = getResources(pgi);
+                            if (res != null) {
+                                pw.println("  label:"
+                                        + loadText(pgi, pgi.labelRes, pgi.nonLocalizedLabel));
+                                pw.println("  description:"
+                                        + loadText(pgi, pgi.descriptionRes,
+                                                pgi.nonLocalizedDescription));
+                            }
+                        }
+                    }
+                } else {
+                    pw.println(((labels && !summary) ? "+ " : "") + "ungrouped:");
+                }
+                prefix = "  ";
+            }
+
+	    List<PermissionInfo> ps;
+	    try {
+		ps = Arrays.asList(mPm.queryPermissionsByGroup(groupList.get(i), 0));
+	    } catch (RuntimeException e) {
+		ps = Arrays.asList(mPermManager.queryPermissionsByGroup(groupList.get(i), 0));
+	    }
+            final int count = ps.size();
+            boolean first = true;
+            for (int p = 0 ; p < count ; p++) {
+                PermissionInfo pi = ps.get(p);
+                if (groups && groupName == null && pi.group != null) {
+                    continue;
+                }
+                final int base = pi.protectionLevel & PermissionInfo.PROTECTION_MASK_BASE;
+                if (base < startProtectionLevel
+                        || base > endProtectionLevel) {
+                    continue;
+                }
+                if (summary) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        pw.print(", ");
+                    }
+                    Resources res = getResources(pi);
+                    if (res != null) {
+                        pw.print(loadText(pi, pi.labelRes,
+                                pi.nonLocalizedLabel));
+                    } else {
+                        pw.print(pi.name);
+                    }
+                } else {
+                    pw.println(prefix + (labels ? "+ " : "")
+                            + "permission:" + pi.name);
+                    if (labels) {
+                        pw.println(prefix + "  package:" + pi.packageName);
+                        Resources res = getResources(pi);
+                        if (res != null) {
+                            pw.println(prefix + "  label:"
+                                    + loadText(pi, pi.labelRes,
+                                            pi.nonLocalizedLabel));
+                            pw.println(prefix + "  description:"
+                                    + loadText(pi, pi.descriptionRes,
+                                            pi.nonLocalizedDescription));
+                        }
+                        pw.println(prefix + "  protectionLevel:"
+                                + getProtLevel(pi.protectionLevel));
+                    }
+                }
+            }
+	    if (summary) {
+                pw.println("");
+            }
+        }
+    }
+
+    private int runListPermissions() throws Exception {
+        boolean labels = false;
+        boolean groups = false;
+        boolean userOnly = false;
+        boolean summary = false;
+        boolean dangerousOnly = false;
+        String opt;
+        while ((opt = nextOption()) != null) {
+            switch (opt) {
+                case "-d":
+                    dangerousOnly = true;
+                    break;
+                case "-f":
+                    labels = true;
+                    break;
+                case "-g":
+                    groups = true;
+                    break;
+                case "-s":
+                    groups = true;
+                    labels = true;
+                    summary = true;
+                    break;
+                case "-u":
+                    userOnly = true;
+                    break;
+		default:
+                    System.err.println("Error: Unknown option: " + opt);
+                    return 1;
+            }
+        }
+
+	final ArrayList<String> groupList = new ArrayList<String>();
+        if (groups) {
+            final List<PermissionGroupInfo> infos = Arrays.asList(mPm.getAllPermissionGroups(0));
+            final int count = infos.size();
+            for (int i = 0; i < count; i++) {
+                groupList.add(infos.get(i).name);
+            }
+            groupList.add(null);
+        } else {
+            final String grp = nextArg();
+            groupList.add(grp);
+        }
+
+	if (dangerousOnly) {
+            System.out.println("Dangerous Permissions:");
+            System.out.println("");
+            doListPermissions(groupList, groups, labels, summary,
+                    PermissionInfo.PROTECTION_DANGEROUS,
+                    PermissionInfo.PROTECTION_DANGEROUS);
+            if (userOnly) {
+                System.out.println("Normal Permissions:");
+                System.out.println("");
+                doListPermissions(groupList, groups, labels, summary,
+                        PermissionInfo.PROTECTION_NORMAL,
+                        PermissionInfo.PROTECTION_NORMAL);
+            }
+        } else if (userOnly) {
+            System.out.println("Dangerous and Normal Permissions:");
+            System.out.println("");
+            doListPermissions(groupList, groups, labels, summary,
+                    PermissionInfo.PROTECTION_NORMAL,
+                    PermissionInfo.PROTECTION_DANGEROUS);
+        } else {
+            System.out.println("All Permissions:");
+            System.out.println("");
+            doListPermissions(groupList, groups, labels, summary,
+                    -10000, 10000);
         }
         return 0;
     }

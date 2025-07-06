@@ -19,5 +19,13 @@ and are runnable/debuggable from Android Studio
 
 # Implemented `pm` commands
 
-- [x] `pm path [--user USER_ID] PACKACGE`
-
+- [x] `pm path`
+- [x] `pm list features`
+- [x] `pm list instrumentation`
+- [x] `pm list permission-groups`
+- [ ] `pm list package[s]`
+- [x] `pm list permissions`
+- [ ] `pm query-*`
+- [x] `pm install`
+- [x] `pm uninstall`
+- [x] `pm has-feature`
