@@ -33,6 +33,7 @@ import android.content.pm.PackageInstaller;
 import android.content.pm.PackageItemInfo;
 import android.content.pm.PermissionInfo;
 import android.content.pm.PermissionGroupInfo;
+import android.content.pm.ResolveInfo;
 import android.content.pm.SharedLibraryInfo;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
@@ -119,23 +120,6 @@ public class Pm extends BaseCommand {
     private IPackageManager mPm; // IPackageManager mPm;
     
     private IPermissionManager mPermManager;
-
-    private int mStartFlags = 0;
-    private boolean mWaitOption = false;
-    private boolean mStopOption = false;
-
-    private int mRepeat = 0;
-    private Integer mUserId;
-    private String mReceiverPermission;
-    private boolean mCheckDrawOverAppsPermissions = false;
-
-    /*
-    private String mProfileFile;
-    private int mSamplingInterval;
-    private boolean mAutoStop;
-    private int mStackId;
-    */
-
     final private WeakHashMap<String, Resources> mResourceCache = new WeakHashMap<String, Resources>();
 
     /**
@@ -161,13 +145,9 @@ public class Pm extends BaseCommand {
                 "Package manager (package) commands provided by the " + FakeContext.PACKAGE_NAME + " app.\n" +
                 "These are similar to commands provided by the Android platform with the /system/bin/pm command.\n\n" +
 		"  help\n" +
-		"    Print this help text\n\n" +
-		"  path [--user USER_ID] PACKAGE}\n" +
+		"    Print this help text.\n\n" +
+		"  path [--user USER_ID] PACKAGE\n" +
 		"   Print the path to the .apk of the given PACKAGE.\n\n" +
-		/*"  dump PACKAGE\n" +
-		"    Print various system state associated with the given PACKAGE.\n\n" +
-		"  dump-package PACKAGE\n" +
-		"    Print package manager state associated with the given PACKAGE.\n\n" + */
 		"  has-feature FEATURE_NAME [version]\n" +
 		"    Prints true and returns exit status 0 when system has a FEATURE_NAME,\n" +
 		"    otherwise prints false and returns exit status 1.\n\n" +
@@ -177,11 +157,33 @@ public class Pm extends BaseCommand {
 		"    Prints all test packages; optionally only those targeting TARGET-PACKAGE\n\n" +
 		"    Options:\n" +
 		"      -f: dump the name of the .apk file containing the test package\n\n" +
+		"  list libraries\n" +
+		"    Prints all system libraries.\n\n" +
+		"  list packages [-f] [-d] [-e] [-s] [-3] [-i] [-u] [-l] [--user USER_ID] [FILTER]\n" +
+		"    Prints all packages; optionally only those whose name contains\n" +
+		"    the text in FILTER.\n" +
+		"    Options:\n" +
+		"      -f: see their associated file\n" +
+		"      -d: filter to only show disabled packages\n" +
+		"      -s: filter to only show system packages\n" +
+		"      -3: filter to only show third party packages\n" +
+		"      -i: see the installer for the packages\n" +
+		"      -u: also include uninstalled packages\n" +
+		"      -l: also includes launcher activity (Termux only)\n\n" +
+		"  list permission-groups\n" +
+		"    Prints all known permission groups.\n" +
+		"  list permissions [-g] [-f] [-d] [-u] [GROUP]\n" +
+		"    Prints all known permissions; optionally only those in GROUP.\n" +
+		"    Options:\n" +
+		"      -g: organize by group\n" +
+		"      -f: print all information\n" +
+		"      -s: short summary\n" +
+		"      u: list only the permissions users will see\n\n" +
 		"  install PATH\n" +
 		"    Install an application. Must provide the apk data to install,\n" +
 		"    as an absolute file path\n\n" +
 		"  uninstall PACKAGE\n" +
-		"    Remove the given package name from the system.\n\n"
+		"    Remove the given package name from the system.\n"
 	);
         //IntentCmd.printIntentArgsHelp(pw, "");
         pw.flush();
@@ -520,7 +522,8 @@ public class Pm extends BaseCommand {
         boolean listDisabled = false, listEnabled = false;
         boolean listSystem = false, listThirdParty = false;
         boolean listInstaller = false;
-        int userId = USER_ALL;
+	boolean listLauncher = false;
+	int userId = USER_ALL;
         try {
             String opt;
             while ((opt = nextOption()) != null) {
@@ -549,6 +552,10 @@ public class Pm extends BaseCommand {
                     case "--user":
                         userId = Integer.parseInt(nextArgRequired());
                         break;
+		    // FIXME: while i dont have time to implement resolve-activity
+		    case "-l":
+		        listLauncher = true;
+			break;
                     default:
                         pw.println("Error: Unknown option: " + opt);
                         return -1;
@@ -584,6 +591,21 @@ public class Pm extends BaseCommand {
                     pw.print("  installer=");
                     pw.print(mPm.getInstallerPackageName(info.packageName));
                 }
+
+		if (listLauncher) {
+		    Intent intent = new Intent(Intent.ACTION_MAIN, null);
+		    intent.addCategory(Intent.CATEGORY_LAUNCHER);
+		    intent.setPackage(info.packageName);
+		    List<ResolveInfo> ri = Arrays.asList(mPm.queryIntentActivities(intent, 0, 0));
+		    String launcherAct = null;
+		    if (!ri.isEmpty()) {
+			launcherAct = ri.get(0).activityInfo.name;
+		    }
+		    if (launcherAct != null) {
+			pw.print("  launcher=");
+			pw.print(launcherAct);
+		    }
+		}
                 pw.println();
             }
         }

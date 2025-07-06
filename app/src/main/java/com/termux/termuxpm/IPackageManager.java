@@ -11,6 +11,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageInstaller;
 import android.content.pm.PermissionInfo;
 import android.content.pm.PermissionGroupInfo;
+import android.content.pm.ResolveInfo;
 
 import android.net.Uri;
 import android.os.IBinder;
@@ -282,13 +283,17 @@ class IPackageManager {
         );
     }
 
-    Object queryIntentActivities(Intent intent, int flags, int userId) throws Exception {
-        return mQueryIntentActivities.invoke(
+    ResolveInfo[] queryIntentActivities(Intent intent, int flags, int userId) throws Exception {
+        Object mFl = mQueryIntentActivities.invoke(
             mPm,
             "intent", intent,
             "flags",  flags,
             "userId", userId
         );
+
+	Method gLm = mFl.getClass().getMethod("getList");
+
+	return ((List<ResolveInfo>) gLm.invoke(mFl)).toArray(new ResolveInfo[0]);
     }
 
     Object queryIntentReceivers(Intent intent, int flags, int userId) throws Exception {
