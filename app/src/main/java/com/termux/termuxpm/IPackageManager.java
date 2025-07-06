@@ -2,14 +2,18 @@ package com.termux.termuxpm;
 
 import android.annotation.SuppressLint;
 import android.content.ComponentName;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.FeatureInfo;
+import android.content.pm.InstrumentationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PermissionGroupInfo;
 import android.net.Uri;
 import android.os.IBinder;
 
 import java.lang.reflect.Method;
+
+import java.util.List;
 
 @SuppressLint("PrivateApi")
 class IPackageManager {
@@ -20,19 +24,16 @@ class IPackageManager {
     private final CrossVersionReflectedMethod mGetInstalledPackages;
     private final CrossVersionReflectedMethod mGetInstalledApplications;
     private final CrossVersionReflectedMethod mGetInstallerPackageName;
-    private final CrossVersionReflectedMethod mInstallPackage;
-    private final CrossVersionReflectedMethod mDeletePackage;
-    private final CrossVersionReflectedMethod mMovePackage;
-    private final CrossVersionReflectedMethod mSetInstallLocation;
     private final CrossVersionReflectedMethod mGetInstallLocation;
     private final CrossVersionReflectedMethod mGetSystemAvailableFeatures;
     private final CrossVersionReflectedMethod mGetSystemSharedLibraryNames;
     private final CrossVersionReflectedMethod mGetAllPermissionGroups;
-    private final CrossVersionReflectedMethod mGrantRuntimePermission;
-    private final CrossVersionReflectedMethod mRevokeRuntimePermission;
-    private final CrossVersionReflectedMethod mClearApplicationUserData;
-    private final CrossVersionReflectedMethod mSetComponentEnabledSetting;
     private final CrossVersionReflectedMethod mHasSystemFeature;
+    private final CrossVersionReflectedMethod mQueryIntentServices;
+    private final CrossVersionReflectedMethod mQueryIntentActivities;
+    private final CrossVersionReflectedMethod mQueryIntentReceivers;
+    private final CrossVersionReflectedMethod mGetAllPackages;
+    private final CrossVersionReflectedMethod mQueryInstrumentationAsUser;
 
     IPackageManager() throws Exception {
         IBinder binder = (IBinder) Class
@@ -88,54 +89,6 @@ class IPackageManager {
                 String.class, "packageName")
             .tryMethodVariantInexact("getInstallerForPackage",
                 String.class, "packageName");
-
-        // installPackage variants
-        mInstallPackage = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("installPackage",
-                Uri.class,   "origin",
-                "android.content.pm.IPackageInstallObserver", "observer", null,
-                int.class,   "flags", 0,
-                String.class,"installerPackageName", null,
-                int.class,   "userId", 0)
-            .tryMethodVariantInexact("installPackage",
-                Uri.class,   "origin",
-                "android.content.pm.IPackageInstallObserver", "observer", null,
-                int.class,   "flags", 0,
-                boolean.class,"installExternal", false)
-            .tryMethodVariantInexact("installPackage",
-                Uri.class,   "origin",
-                "android.content.pm.IPackageInstallObserver", "observer", null,
-                int.class,   "flags", 0);
-
-        // deletePackage variants
-        mDeletePackage = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("deletePackage",
-                String.class, "packageName",
-                "android.content.pm.IPackageDeleteObserver", "observer", null,
-                int.class,    "flags", 0,
-                int.class,    "userId", 0)
-            .tryMethodVariantInexact("deletePackage",
-                String.class, "packageName",
-                "android.content.pm.IPackageDeleteObserver", "observer", null,
-                int.class,    "flags", 0);
-
-        // movePackage variants (Lollipop+)
-        mMovePackage = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("movePackage",
-                String.class, "packageName",
-                int.class,    "flags",
-                "android.content.pm.IPackageMoveObserver", "observer", null);
-
-        // install location variants
-        mSetInstallLocation = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("setInstallLocation",
-                int.class, "loc",
-                int.class, "userId")
-            .tryMethodVariantInexact("setInstallLocation",
-                int.class, "loc");
-        mGetInstallLocation = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("getInstallLocation");
-
         // the rest
         mGetSystemAvailableFeatures = new CrossVersionReflectedMethod(pmClass)
             .tryMethodVariantInexact("getSystemAvailableFeatures");
@@ -144,28 +97,6 @@ class IPackageManager {
         mGetAllPermissionGroups = new CrossVersionReflectedMethod(pmClass)
             .tryMethodVariantInexact("getAllPermissionGroups",
                 int.class, "flags");
-        mGrantRuntimePermission = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("grantRuntimePermission",
-                String.class, "packageName",
-                String.class, "permission",
-                int.class,    "userId");
-        mRevokeRuntimePermission = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("revokeRuntimePermission",
-                String.class, "packageName",
-                String.class, "permission",
-                int.class,    "userId");
-        mClearApplicationUserData = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("clearApplicationUserData",
-                String.class, "packageName",
-                "android.content.pm.IPackageDataObserver", "observer", null,
-                int.class,    "userId", 0);
-        mSetComponentEnabledSetting = new CrossVersionReflectedMethod(pmClass)
-            .tryMethodVariantInexact("setComponentEnabledSetting",
-                ComponentName.class, "componentName",
-                int.class,           "newState",
-                int.class,           "flags",
-                int.class,           "userId");
-
 	mHasSystemFeature = new CrossVersionReflectedMethod(pmClass)
 	    .tryMethodVariantInexact("hasSystemFeature",
 		String.class, "featureName",
@@ -176,6 +107,56 @@ class IPackageManager {
 		int.class,    "userId")
 	    .tryMethodVariantInexact("hasSystemFeature",
 		String.class, "featureName");
+
+        mQueryIntentServices = new CrossVersionReflectedMethod(pmClass)
+            .tryMethodVariantInexact("queryIntentServices",
+                "android.content.Intent", "intent", null,
+                int.class,                 "flags",  0,
+                int.class,                 "userId", 0)
+            .tryMethodVariantInexact("queryIntentServices",
+                "android.content.Intent", "intent", null,
+                int.class,                 "flags");
+
+        mQueryIntentActivities = new CrossVersionReflectedMethod(pmClass)
+            .tryMethodVariantInexact("queryIntentActivities",
+                "android.content.Intent", "intent", null,
+                int.class,                 "flags",  0,
+                int.class,                 "userId", 0)
+            .tryMethodVariantInexact("queryIntentActivities",
+                "android.content.Intent", "intent", null,
+                int.class,                 "flags");
+
+        mQueryIntentReceivers = new CrossVersionReflectedMethod(pmClass)
+            .tryMethodVariantInexact("queryIntentReceivers",
+                "android.content.Intent", "intent", null,
+                int.class,                 "flags",  0,
+                int.class,                 "userId", 0)
+            .tryMethodVariantInexact("queryIntentReceivers",
+		"android.content.Intent",
+		"intent", null,
+                int.class,
+		"flags"
+	);
+        mGetAllPackages = new CrossVersionReflectedMethod(pmClass)
+            .tryMethodVariantInexact("getInstalledPackages",
+                int.class, "flags",
+                int.class, "userId")
+            .tryMethodVariantInexact("getInstalledPackages",
+                int.class, "flags"
+	);
+
+        mQueryInstrumentationAsUser = new CrossVersionReflectedMethod(pmClass)
+            .tryMethodVariantInexact("queryInstrumentationAsUser",
+                String.class, "targetPackage", null,
+                int.class,    "userId",        0)
+            .tryMethodVariantInexact("queryInstrumentation",
+                String.class, "targetPackage", null);
+
+	mGetInstallLocation = new CrossVersionReflectedMethod(pmClass)
+        .tryMethodVariantInexact("getInstallLocation",
+            int.class, "userId")
+        .tryMethodVariantInexact("getInstallLocation");
+
     }
 
     PackageInfo getPackageInfo(String pkg, int flags, int userId) throws Exception {
@@ -219,51 +200,14 @@ class IPackageManager {
         );
     }
 
-    void installPackage(Uri origin, Object observer, int flags,
-                        String installer, int userId) throws Exception {
-        mInstallPackage.invoke(
-            mPm,
-            "origin",               origin,
-            "observer",             observer,
-            "flags",                flags,
-            "installerPackageName", installer,
-            "userId",               userId
-        );
-    }
-
-    void deletePackage(String pkg, Object observer, int flags, int userId) throws Exception {
-        mDeletePackage.invoke(
-            mPm,
-            "packageName", pkg,
-            "observer",    observer,
-            "flags",       flags,
-            "userId",      userId
-        );
-    }
-
-    void movePackage(String pkg, int flags, Object observer) throws Exception {
-        mMovePackage.invoke(
-            mPm,
-            "packageName", pkg,
-            "flags",       flags,
-            "observer",    observer
-        );
-    }
-
-    void setInstallLocation(int loc, int userId) throws Exception {
-        mSetInstallLocation.invoke(
-            mPm,
-            "loc",    loc,
-            "userId", userId
-        );
-    }
-
     int getInstallLocation() throws Exception {
         return (Integer) mGetInstallLocation.invoke(mPm);
     }
 
     FeatureInfo[] getSystemAvailableFeatures() throws Exception {
-        return (FeatureInfo[]) mGetSystemAvailableFeatures.invoke(mPm);
+        Object mFl = mGetSystemAvailableFeatures.invoke(mPm);
+	Method gLm = mFl.getClass().getMethod("getList");
+	return ((List<FeatureInfo>) gLm.invoke(mFl)).toArray(new FeatureInfo[0]);
     }
 
     String[] getSystemSharedLibraryNames() throws Exception {
@@ -277,45 +221,7 @@ class IPackageManager {
         );
     }
 
-    void grantRuntimePermission(String pkg, String perm, int userId) throws Exception {
-        mGrantRuntimePermission.invoke(
-            mPm,
-            "packageName", pkg,
-            "permission",  perm,
-            "userId",      userId
-        );
-    }
-
-    void revokeRuntimePermission(String pkg, String perm, int userId) throws Exception {
-        mRevokeRuntimePermission.invoke(
-            mPm,
-            "packageName", pkg,
-            "permission",  perm,
-            "userId",      userId
-        );
-    }
-
-    void clearApplicationUserData(String pkg, Object observer, int userId) throws Exception {
-        mClearApplicationUserData.invoke(
-            mPm,
-            "packageName", pkg,
-            "observer",    observer,
-            "userId",      userId
-        );
-    }
-
-    void setComponentEnabledSetting(ComponentName cmp, int newState,
-                                    int flags, int userId) throws Exception {
-        mSetComponentEnabledSetting.invoke(
-            mPm,
-            "componentName", cmp,
-            "newState",      newState,
-            "flags",         flags,
-            "userId",        userId
-        );
-    }
-
-    public boolean hasSystemFeature(String featureName, int featureVersion, int userId) throws Exception {
+    boolean hasSystemFeature(String featureName, int featureVersion, int userId) throws Exception {
 	return (Boolean) mHasSystemFeature.invoke(
 	    mPm,
 	    "featureName",    featureName,
@@ -324,7 +230,7 @@ class IPackageManager {
 	);
     }
 
-    public boolean hasSystemFeature(String featureName, int userId) throws Exception {
+    boolean hasSystemFeature(String featureName, int userId) throws Exception {
 	return (Boolean) mHasSystemFeature.invoke(
 	    mPm,
 	    "featureName", featureName,
@@ -332,10 +238,66 @@ class IPackageManager {
 	);
     }
 
-    public boolean hasSystemFeature(String featureName) throws Exception {
+    boolean hasSystemFeature(String featureName) throws Exception {
 	return (Boolean) mHasSystemFeature.invoke(
 	    mPm,
 	    "featureName", featureName
 	);
+    }
+
+    Object queryIntentServices(Intent intent, int flags, int userId) throws Exception {
+        return mQueryIntentServices.invoke(
+            mPm,
+            "intent", intent,
+            "flags",  flags,
+            "userId", userId
+        );
+    }
+
+    Object queryIntentActivities(Intent intent, int flags, int userId) throws Exception {
+        return mQueryIntentActivities.invoke(
+            mPm,
+            "intent", intent,
+            "flags",  flags,
+            "userId", userId
+        );
+    }
+
+    Object queryIntentReceivers(Intent intent, int flags, int userId) throws Exception {
+        return mQueryIntentReceivers.invoke(
+            mPm,
+            "intent", intent,
+            "flags",  flags,
+            "userId", userId
+        );
+    }
+
+    PackageInfo[] getAllPackages(int flags, int userId) throws Exception {
+        @SuppressWarnings("unchecked")
+        List<PackageInfo> pkgs = (List<PackageInfo>) mGetAllPackages.invoke(
+            mPm,
+            "flags",  flags,
+            "userId", userId
+        );
+        return pkgs.toArray(new PackageInfo[0]);
+    }
+
+    InstrumentationInfo[] queryInstrumentationAsUser(String targetPackage, int userId) throws Exception {
+        Object mFl = mQueryInstrumentationAsUser.invoke(
+                mPm,
+                "targetPackage", targetPackage,
+                "userId",        userId
+            );
+	Method gLm = mFl.getClass().getMethod("getList");
+        return ((List<InstrumentationInfo>) gLm.invoke(mFl)).toArray(new InstrumentationInfo[0]);
+    }
+
+    InstrumentationInfo[] queryInstrumentation(String targetPackage) throws Exception {
+        Object mFl = mQueryInstrumentationAsUser.invoke(
+                mPm,
+                "targetPackage", targetPackage
+        );
+	Method gLm = mFl.getClass().getMethod("getList");
+	return ((List<InstrumentationInfo>) gLm.invoke(mFl)).toArray(new InstrumentationInfo[0]);
     }
 }

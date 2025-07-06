@@ -24,8 +24,11 @@ import android.content.pm.PackageManager;
 import android.content.ComponentName;
 import android.content.IIntentReceiver;
 import android.content.Intent;
+import android.content.pm.FeatureInfo;
+import android.content.pm.InstrumentationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageInfo;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -36,10 +39,15 @@ import android.util.AndroidException;
 import com.termux.termuxpm.logger.Logger;
 import com.termux.termuxpm.reflection.ReflectionUtils;
 
+import java.io.File;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Method;
 import java.net.URISyntaxException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 
 public class Pm extends BaseCommand {
 
@@ -164,11 +172,11 @@ public class Pm extends BaseCommand {
             return 0;
         }
 
-        /*mAm = new IActivityManager();
+        mAm = new IActivityManager();
         if (mAm == null) {
             System.err.println(NO_SYSTEM_ERROR_CODE);
             throw new AndroidException("Can't connect to activity manager; is the system running?");
-        }*/
+        }
 
         mPm = new IPackageManager(); // IPackageManager.Stub.asInterface(ServiceManager.getService("package"));
 	if (mPm == null) {
@@ -182,6 +190,10 @@ public class Pm extends BaseCommand {
 	    return runHasFeature();
         } else if (op.equals("list")) {
 	    return runList();
+	} else if (op.equals("install")) {
+	    return runInstall();
+	} else if (op.equals("uninstall")) {
+	    return runUninstall();
         } else {
             showError("Error: unknown command '" + op + "'");
             return 1;
@@ -365,7 +377,7 @@ public class Pm extends BaseCommand {
 	int userId = USER_ALL;
 	String option = nextOption();
 	if (option != null && option.equals("--user")) {
-	    // idk
+	    userId = Integer.parseInt(option);
 	}
 	String pkg = nextArgRequired();
 	if (pkg == null) {
@@ -393,6 +405,65 @@ public class Pm extends BaseCommand {
 	}
     }
 
+    private Uri doGetUri(String path) {
+        if (path.startsWith("/data/data/com.termux/files")) {
+            String trimmed = path.substring("/data/data/com.termux/files".length());
+            return Uri.parse("content://com.termux.provider/files" + trimmed);
+        } else if (path.startsWith("/")) {
+            return Uri.parse("content://com.termux.provider/root" + path);
+        } else if (path.startsWith("./")) {
+            System.err.println("Error: you must provide the absolute path"); // FIXME: way to handle relative path?
+            return null;
+        } else {
+            System.err.println("Error: you must provide the absolute path");
+	    return null;
+        }
+    }
+
+    private int doPromptInstall(String apkPath) throws Exception {
+        String installerPkg = FakeContext.PACKAGE_NAME;
+        Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+	Uri apkUri = doGetUri(apkPath);
+	if (apkUri == null) return 1;
+	System.out.println("debug: content uri " + apkUri.toString());
+	intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+	intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+	intent.putExtra(Intent.EXTRA_REFERRER, Uri.parse("android-app://" + installerPkg));
+        mAm.startActivityAsUser(
+            intent, null, Intent.FLAG_ACTIVITY_NEW_TASK, null, 0
+        );
+        return 0;
+    }
+
+    private int runInstall() throws Exception {
+	// idk how to do this fully
+	final String apkPath = nextArg();
+	if (apkPath == null) {
+	    System.err.println("Error: no APK path supplied");
+	    return 1;
+	}
+
+	return doPromptInstall(apkPath);
+    }
+
+    private int runUninstall() throws Exception {
+	final String packageName = nextArgRequired();
+
+	if (packageName == null) {
+	    System.err.println("Error: package name not specified");
+	    return 1;
+	}
+
+	Intent intent = new Intent(Intent.ACTION_UNINSTALL_PACKAGE);
+	intent.setData(Uri.parse("package:" + packageName));
+	mAm.startActivityAsUser(
+	    intent, null, Intent.FLAG_ACTIVITY_NEW_TASK, null, 0
+	);
+
+	return 0;
+    }
+
     /* TODO: runList* impl :TODO */
 
     private int runList() throws Exception {
@@ -403,10 +474,94 @@ public class Pm extends BaseCommand {
         }
 
 	if (type.equals("features")) {
-	    return 0; //runListFeatures();
+	    return runListFeatures();
+	} else if (type.equals("instrumentation")) {
+	    return runListInstrumentation();
 	}
 
 	System.err.println("Error: unknown list type '" + type + "'");
 	return 1;
+    }
+
+    private int runListFeatures() throws Exception {
+        final FeatureInfo[] list = mPm.getSystemAvailableFeatures();
+
+        Arrays.sort(list, new Comparator<FeatureInfo>() {
+            public int compare(FeatureInfo o1, FeatureInfo o2) {
+                if (o1.name == o2.name) return 0;
+                if (o1.name == null) return -1;
+                if (o2.name == null) return 1;
+                return o1.name.compareTo(o2.name);
+            }
+        });
+
+        final int count = (list != null) ? list.length : 0;
+        for (int p = 0; p < count; p++) {
+            FeatureInfo fi = list[p];
+            System.out.print("feature:");
+            if (fi.name != null) {
+                System.out.print(fi.name);
+                if (fi.version > 0) {
+                    System.out.print("=");
+                    System.out.print(fi.version);
+                }
+                System.out.println();
+            } else {
+                System.out.println("reqGlEsVersion=0x"
+                        + Integer.toHexString(fi.reqGlEsVersion));
+            }
+        }
+        return 0;
+    }
+
+    private int runListInstrumentation() throws Exception {
+        boolean showSourceDir = false;
+        String targetPackage = null;
+
+        try {
+            String opt;
+            while ((opt = nextArg()) != null) {
+                switch (opt) {
+                    case "-f":
+                        showSourceDir = true;
+                        break;
+                    default:
+                        if (opt.charAt(0) != '-') {
+                            targetPackage = opt;
+                        } else {
+                            System.err.println("Error: Unknown option: " + opt);
+                            return -1;
+                        }
+                        break;
+                }
+            }
+        } catch (RuntimeException ex) {
+            System.err.println("Error: " + ex.toString());
+            return -1;
+        }
+
+        final InstrumentationInfo[] list = mPm.queryInstrumentationAsUser(targetPackage, USER_ALL);
+
+        Arrays.sort(list, new Comparator<InstrumentationInfo>() {
+            public int compare(InstrumentationInfo o1, InstrumentationInfo o2) {
+                return o1.targetPackage.compareTo(o2.targetPackage);
+            }
+        });
+
+        final int count = (list != null) ? list.length : 0;
+        for (int p = 0; p < count; p++) {
+            final InstrumentationInfo ii = list[p];
+            System.out.print("instrumentation:");
+            if (showSourceDir) {
+                System.out.print(ii.sourceDir);
+                System.out.print("=");
+            }
+            final ComponentName cn = new ComponentName(ii.packageName, ii.name);
+            System.out.print(cn.flattenToShortString());
+            System.out.print(" (target=");
+            System.out.print(ii.targetPackage);
+            System.out.println(")");
+        }
+        return 0;
     }
 }
